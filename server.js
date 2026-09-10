@@ -12,66 +12,33 @@ app.get("/", (req, res) => {
 <html>
 <head>
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ESP8266 Mic</title>
-
-  <style>
-    body {
-      font-family: Arial;
-      text-align: center;
-      background: #111;
-      color: white;
-      padding: 30px;
-    }
-
-    button {
-      font-size: 24px;
-      padding: 15px 30px;
-      margin: 20px;
-    }
-
-    #bar {
-      width: 90%;
-      height: 35px;
-      background: #333;
-      margin: auto;
-    }
-
-    #level {
-      height: 100%;
-      width: 0%;
-      background: lime;
-    }
-  </style>
+  <title>ESP8266 Mic Listener</title>
 </head>
 
-<body>
+<body style="font-family:Arial;text-align:center;padding:25px">
 
-<h2>ESP8266 Microphone</h2>
+<h2>ESP8266 Mic Listener</h2>
 
-<p id="status">Not connected</p>
+<p id="status">Connecting...</p>
 
-<button onclick="startAudio()">🔊 START LISTENING</button>
-
-<div id="bar">
-  <div id="level"></div>
-</div>
+<button onclick="startAudio()" style="font-size:22px;padding:15px">
+START LISTENING
+</button>
 
 <script>
 
-let ctx;
-let oscillator;
-let gain;
+let audioContext;
+let nextTime = 0;
 
 const ws = new WebSocket(
-  (location.protocol === "https:" ? "wss://" : "ws://")
-  + location.host
+  "wss://" + location.host
 );
 
 ws.binaryType = "arraybuffer";
 
 ws.onopen = () => {
   document.getElementById("status").innerText =
-    "Connected to server ✅";
+    "Connected to server";
 };
 
 ws.onclose = () => {
@@ -80,19 +47,11 @@ ws.onclose = () => {
 };
 
 function startAudio() {
+  audioContext = new AudioContext({
+    sampleRate: 8000
+  });
 
-  ctx = new AudioContext();
-
-  oscillator = ctx.createOscillator();
-  gain = ctx.createGain();
-
-  oscillator.frequency.value = 500;
-  gain.gain.value = 0;
-
-  oscillator.connect(gain);
-  gain.connect(ctx.destination);
-
-  oscillator.start();
+  nextTime = audioContext.currentTime;
 
   document.getElementById("status").innerText =
     "Listening...";
@@ -100,40 +59,56 @@ function startAudio() {
 
 ws.onmessage = function(event) {
 
-  if (!(event.data instanceof ArrayBuffer))
-    return;
+  if (!audioContext) return;
 
-  const data = new Uint8Array(event.data);
+  if (!(event.data instanceof ArrayBuffer)) return;
 
-  if (data.length === 0)
-    return;
+  const input = new Uint8Array(event.data);
 
-  const sample = data[0];
+  if (input.length === 0) return;
 
-  // MAX4466 signal is approximately centered
-  const level =
-    Math.min(100, Math.abs(sample - 128) * 1.5);
-
-  document.getElementById("level").style.width =
-    level + "%";
-
-  if (gain && ctx) {
-
-    gain.gain.setTargetAtTime(
-      level / 500,
-      ctx.currentTime,
-      0.02
+  const buffer =
+    audioContext.createBuffer(
+      1,
+      input.length,
+      8000
     );
+
+  const channel = buffer.getChannelData(0);
+
+  for (let i = 0; i < input.length; i++) {
+
+    channel[i] =
+      (input[i] - 128) / 128.0;
   }
+
+  const source =
+    audioContext.createBufferSource();
+
+  source.buffer = buffer;
+
+  source.connect(
+    audioContext.destination
+  );
+
+  if (nextTime <
+      audioContext.currentTime) {
+
+    nextTime =
+      audioContext.currentTime;
+  }
+
+  source.start(nextTime);
+
+  nextTime +=
+    buffer.duration;
 };
 
 </script>
-
 </body>
 </html>
   `);
 });
-
 
 wss.on("connection", (ws) => {
 
@@ -151,22 +126,13 @@ wss.on("connection", (ws) => {
         client.send(data, {
           binary: isBinary
         });
-
       }
-
     });
-
   });
-
 });
-
 
 const PORT = process.env.PORT || 10000;
 
 server.listen(PORT, "0.0.0.0", () => {
-
-  console.log(
-    "ESP8266 microphone server running"
-  );
-
+  console.log("Mic server running");
 });
